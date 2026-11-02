@@ -222,3 +222,5 @@ __marimo__/
 # Project secrets and data
 secrets.h
 mesures.db
+ml/dataset.csv
+ml/modele.joblib

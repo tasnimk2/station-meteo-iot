@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Station météo IoT</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root {
+    --rose: #e91e8c;
+    --rose-clair: #ffd6ec;
+    --marron: #6b4226;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 0;
+    min-height: 100vh;
+    background: linear-gradient(160deg, #fff0f7, #ffe0f0);
+    color: var(--marron);
+  }
+  header { text-align: center; padding: 28px 16px 8px; }
+  header h1 { margin: 0; color: var(--marron); font-size: 1.9em; }
+  #maj { margin-top: 6px; font-size: .9em; color: var(--marron); }
+
+  .cercles {
+    display: flex; justify-content: center; flex-wrap: wrap;
+    gap: 28px; padding: 24px 16px;
+  }
+  .cercle { position: relative; width: 210px; height: 210px; }
+  .cercle svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .fond { fill: white; stroke: var(--rose-clair); stroke-width: 14; }
+  .anneau {
+    fill: none; stroke: var(--rose); stroke-width: 14; stroke-linecap: round;
+    stroke-dasharray: 0 999; transition: stroke-dasharray .8s ease;
+  }
+  .texte {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .texte .label { font-size: .95em; color: var(--marron); }
+  .texte .valeur { font-size: 2.3em; font-weight: bold; color: var(--marron); }
+  .texte .unite { font-size: .95em; color: var(--marron); }
+
+  .graphiques { max-width: 900px; margin: 0 auto; padding: 0 16px 32px; }
+  .graphiques div {
+    background: white; border-radius: 18px; padding: 14px; margin-bottom: 18px;
+    box-shadow: 0 4px 14px rgba(233, 30, 140, .15);
+  }
+  footer { text-align: center; padding-bottom: 24px; font-size: .8em; color: var(--marron); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌸 Station météo IoT</h1>
+  <div id="maj">En attente de données...</div>
+</header>
+
+<div class="cercles">
+  <div class="cercle">
+    <svg viewBox="0 0 200 200">
+      <circle class="fond" cx="100" cy="100" r="80"/>
+      <circle class="anneau" id="aT" cx="100" cy="100" r="80"/>
+    </svg>
+    <div class="texte">
+      <span class="label">Température</span>
+      <span class="valeur" id="t">--</span>
+      <span class="unite">°C</span>
+    </div>
+  </div>
+
+  <div class="cercle">
+    <svg viewBox="0 0 200 200">
+      <circle class="fond" cx="100" cy="100" r="80"/>
+      <circle class="anneau" id="aH" cx="100" cy="100" r="80"/>
+    </svg>
+    <div class="texte">
+      <span class="label">Humidité</span>
+      <span class="valeur" id="h">--</span>
+      <span class="unite">%</span>
+    </div>
+  </div>
+
+  <div class="cercle">
+    <svg viewBox="0 0 200 200">
+      <circle class="fond" cx="100" cy="100" r="80"/>
+      <circle class="anneau" id="aP" cx="100" cy="100" r="80"/>
+    </svg>
+    <div class="texte">
+      <span class="label">Pression</span>
+      <span class="valeur" id="p">--</span>
+      <span class="unite">hPa</span>
+    </div>
+  </div>
+</div>
+
+<div class="graphiques">
+  <div><canvas id="gT"></canvas></div>
+  <div><canvas id="gH"></canvas></div>
+  <div><canvas id="gP"></canvas></div>
+</div>
+
+<footer>ESP32 · DHT22 · BMP280 · Flask</footer>
+
+<script>
+const CIRC = 2 * Math.PI * 80;
+const MARRON = '#6b4226';
+
+function jauge(id, valeur, min, max) {
+  const frac = Math.max(0, Math.min(1, (valeur - min) / (max - min)));
+  document.getElementById(id).style.strokeDasharray = (frac * CIRC) + ' ' + CIRC;
+}
+
+function creerGraphique(id, titre, couleur, fond) {
+  return new Chart(document.getElementById(id), {
+    type: 'line',
+    data: { labels: [], datasets: [{
+      label: titre, data: [], borderColor: couleur, backgroundColor: fond,
+      fill: true, pointRadius: 0, tension: 0.35, borderWidth: 3
+    }] },
+    options: {
+      animation: false,
+      plugins: { legend: { labels: { color: MARRON, font: { size: 14 } } } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, color: MARRON }, grid: { color: '#ffe0f0' } },
+        y: { ticks: { color: MARRON }, grid: { color: '#ffe0f0' } }
+      }
+    }
+  });
+}
+
+// Trois nuances de rose : foncé, moyen, clair
+const gT = creerGraphique('gT', 'Température (°C)', '#c2185b', 'rgba(194,24,91,0.15)');
+const gH = creerGraphique('gH', 'Humidité (%)', '#e91e8c', 'rgba(233,30,140,0.15)');
+const gP = creerGraphique('gP', 'Pression (hPa)', '#ff80ab', 'rgba(255,128,171,0.20)');
+
+function remplir(graphique, labels, valeurs) {
+  graphique.data.labels = labels;
+  graphique.data.datasets[0].data = valeurs;
+  graphique.update();
+}
+
+async function rafraichir() {
+  try {
+    const d = await (await fetch('/api/latest')).json();
+    if (d.temperature !== undefined) {
+      document.getElementById('t').textContent = d.temperature.toFixed(1);
+      document.getElementById('h').textContent = d.humidity.toFixed(1);
+      document.getElementById('p').textContent = d.pressure.toFixed(1);
+      jauge('aT', d.temperature, 0, 50);
+      jauge('aH', d.humidity, 0, 100);
+      jauge('aP', d.pressure, 950, 1050);
+      document.getElementById('maj').textContent =
+        'Dernière mesure : ' + d.horodatage.replace('T', ' ');
+    }
+    const hist = await (await fetch('/api/history')).json();
+    const labels = hist.map(m => m.horodatage.slice(11, 16));
+    remplir(gT, labels, hist.map(m => m.temperature));
+    remplir(gH, labels, hist.map(m => m.humidity));
+    remplir(gP, labels, hist.map(m => m.pressure));
+  } catch (e) { console.log(e); }
+}
+rafraichir();
+setInterval(rafraichir, 15000);
+</script>
+</body>
+</html>
